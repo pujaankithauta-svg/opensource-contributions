@@ -6,85 +6,98 @@ Tracking my contributions to prestigious open source projects — bugs fixed, pu
 
 ## 📊 Contribution Log
 
-| # | Project | ⭐ Stars | Issue | Bug Description | Fix Summary | PR / Commit | Status |
-|---|---------|---------|-------|-----------------|-------------|-------------|--------|
-| 1 | [Textualize/rich](https://github.com/Textualize/rich) | 56k+ | [#3299](https://github.com/Textualize/rich/issues/3299) | `Segment._split_cells` produces wrong split points for strings mixing 2-cell wide characters (emoji, CJK) with 1-cell characters. The heuristic initial position `int((cut/cell_length)*len(text))` is inaccurate and the while-loop cannot backtrack to recover. | Replaced heuristic + non-backtracking while-loop with a correct O(n) linear scan over characters, accumulating cell widths until the cut point is reached. Wide chars cut in the middle are padded with spaces on both sides. | [PR #4146](https://github.com/Textualize/rich/pull/4146) | 🟡 Open |
-| 2 | [psf/requests](https://github.com/psf/requests) | 54k+ | [#6102](https://github.com/psf/requests/issues/6102) | `HTTPDigestAuth` fails with non-latin credentials: when `username`/`password` is passed as `bytes`, the Authorization header contains the Python `repr` of the bytes object (e.g. `b'Ond\xc5\x99ej'`) instead of the decoded string. | Added normalization at the start of `build_digest_header()` to decode any `bytes` username/password to `str` via UTF-8 before use in both the A1 hash computation and the `username=` header field. | [Fork + Branch](https://github.com/pujaankithauta-svg/requests/tree/fix/digest-auth-non-latin-credentials) · [Commit](https://github.com/pujaankithauta-svg/requests/commit/52bae90316113988b2e3d563d7f8ccad31a242e4) | 🟠 PR Blocked (repo has contributor-only interaction limits) |
+| # | Project | Company | ⭐ Stars | Issue | Bug Description | Fix Summary | PR | Status |
+|---|---------|---------|---------|-------|-----------------|-------------|-----|--------|
+| 1 | [Textualize/rich](https://github.com/Textualize/rich) | Textualize (USA) | 56k+ | [#3299](https://github.com/Textualize/rich/issues/3299) | `Segment._split_cells` wrong split points for strings mixing 2-cell emoji/CJK chars with 1-cell chars | Replaced heuristic + non-backtracking while-loop with correct O(n) linear scan; wide chars cut in the middle padded with spaces | [PR #4146](https://github.com/Textualize/rich/pull/4146) | 🟡 Open |
+| 2 | [openai/openai-python](https://github.com/openai/openai-python) | OpenAI (USA) | 30k+ | [#3201](https://github.com/openai/openai-python/issues/3201) | Streaming `tool_call` deltas with duplicate logical indexes in the first chunk are accumulated incorrectly, producing invalid JSON arguments | Extracted `_accumulate_list()` helper that merges by logical `index` field (not physical position); called on both first-encounter and subsequent merges | [PR #3307](https://github.com/openai/openai-python/pull/3307) | 🟡 Open |
+| 3 | [psf/requests](https://github.com/psf/requests) | Python (USA) | 54k+ | [#6102](https://github.com/psf/requests/issues/6102) | `HTTPDigestAuth` fails with non-latin credentials: bytes username renders as `b'...'` repr in Authorization header | Added UTF-8 bytes→str normalization at top of `build_digest_header()` for both hash input and header field | [Fork/Branch](https://github.com/pujaankithauta-svg/requests/tree/fix/digest-auth-non-latin-credentials) | 🟠 Blocked (repo restricts new contributors) |
 
 ---
 
 ## 📁 Contribution Details
 
-### 1. `Textualize/rich` — Segment._split_cells wide-char bug
+### 1. `openai/openai-python` — Streaming tool_call delta accumulation bug
 
-**Project:** [`rich`](https://github.com/Textualize/rich) — Terminal text formatting library. 56k+ ⭐  
+**Project:** [`openai-python`](https://github.com/openai/openai-python) — Official Python SDK for the OpenAI API. **30k+ ⭐ · OpenAI**  
+**File changed:** `src/openai/lib/streaming/_deltas.py`  
+**Issue:** [#3201](https://github.com/openai/openai-python/issues/3201)  
+**PR:** [#3307](https://github.com/openai/openai-python/pull/3307) ✅ Open  
+
+**Bug:**
+When a streaming response's first chunk contains two entries with the same logical `"index"` value (e.g. one for the tool-call header and one for the first argument fragment), both were stored as separate physical list slots. Subsequent chunks merged into physical slot 0 while the duplicate slot retained stale partial data — producing broken argument JSON like:
+```json
+[
+  {"index": 0, "function": {"arguments": "path\": \".\"} "}},
+  {"index": 0, "function": {"arguments": " {\""}}
+]
+```
+
+**Root cause:** The fast path `if key not in acc: acc[key] = delta_value` stored the raw list without merging duplicate logical indexes.
+
+**Fix:**
+```python
+# New helper merges by logical index, not physical position
+def _accumulate_list(acc_list, delta_list, ...):
+    for delta_entry in delta_list:
+        index = delta_entry["index"]
+        for i, existing in enumerate(acc_list):
+            if is_dict(existing) and existing.get("index") == index:
+                acc_list[i] = accumulate_delta(existing, delta_entry)
+                found = True; break
+        if not found:
+            acc_list.append(delta_entry)
+    return acc_list
+
+# Called on BOTH first-encounter and subsequent merges
+if key not in acc:
+    if is_list(delta_value) and all(is_dict(x) and "index" in x for x in delta_value):
+        acc[key] = _accumulate_list([], delta_value, ...)
+```
+
+**Outcome:** Duplicate logical indexes in any chunk collapse correctly into a single entry. Arguments accumulate into valid JSON.
+
+---
+
+### 2. `Textualize/rich` — Segment._split_cells wide-char bug
+
+**Project:** [`rich`](https://github.com/Textualize/rich) — Terminal text formatting library. **56k+ ⭐ · Textualize**  
 **File changed:** `rich/segment.py`  
 **Issue:** [#3299](https://github.com/Textualize/rich/issues/3299)  
-**PR:** [#4146](https://github.com/Textualize/rich/pull/4146)  
+**PR:** [#4146](https://github.com/Textualize/rich/pull/4146) ✅ Open  
 
 **Bug:**
 ```python
-s = Segment("🦊🦊🦊\n\n\n\n\n\n")
-Segment._split_cells(s, 3)
+Segment._split_cells(Segment("🦊🦊🦊\n\n\n\n\n\n"), 3)
 # ❌ Wrong: returned all 3 foxes (6 cells) on the left side
 ```
 
-**Root cause:** The initial character position was estimated as:
-```python
-pos = int((cut / cell_length) * len(text))
-```
-This ratio is wrong when the string mixes 2-cell wide chars with 1-cell chars. The while-loop adjusted by `±1` but couldn't backtrack far enough.
+**Root cause:** Initial position estimated as `pos = int((cut / cell_length) * len(text))` — wrong ratio for mixed-width strings. While-loop adjusted by ±1 but couldn't backtrack far enough.
 
-**Fix:** Linear O(n) scan — walk each character, accumulate cell widths, stop at `cut`:
-```python
-cell_pos = 0
-for pos, char in enumerate(text):
-    char_width = cell_size(char)
-    if cell_pos + char_width > cut:
-        # cut falls in a wide char — pad both sides with space
-        return (_Segment(text[:pos] + " ", ...), _Segment(" " + text[pos+1:], ...))
-    cell_pos += char_width
-    if cell_pos == cut:
-        return (_Segment(text[:pos+1], ...), _Segment(text[pos+1:], ...))
-```
+**Fix:** O(n) linear scan accumulating cell widths character by character, stopping exactly at `cut`. Wide chars split in the middle padded with spaces on both sides.
 
 **Outcome:** Correct splits for all mixed-width strings. `lru_cache` preserved.
 
 ---
 
-### 2. `psf/requests` — HTTPDigestAuth non-latin credentials bug
+### 3. `psf/requests` — HTTPDigestAuth non-latin credentials bug
 
-**Project:** [`requests`](https://github.com/psf/requests) — HTTP library for Python. 54k+ ⭐  
+**Project:** [`requests`](https://github.com/psf/requests) — HTTP library for Python. **54k+ ⭐**  
 **File changed:** `src/requests/auth.py`  
 **Issue:** [#6102](https://github.com/psf/requests/issues/6102)  
-**Fork:** [pujaankithauta-svg/requests](https://github.com/pujaankithauta-svg/requests/tree/fix/digest-auth-non-latin-credentials)  
+**Status:** Fix committed to fork; PR blocked by repo's contributor-only interaction limits.
 
-**Bug:**
-```python
-auth = HTTPDigestAuth("Ondřej".encode("utf-8"), "heslíčko")
-# ❌ Header: Digest username="b'Ond\xc5\x99ej'", ...
-```
-
-**Root cause:** `self.username` (bytes) was interpolated directly into f-strings in both the A1 hash computation and the Authorization header value.
-
-**Fix:** Decode bytes to str at the top of `build_digest_header()`:
-```python
-_username = self.username.decode("utf-8") if isinstance(self.username, bytes) else self.username
-_password = self.password.decode("utf-8") if isinstance(self.password, bytes) else self.password
-A1 = f"{_username}:{realm}:{_password}"
-# and use _username in the header too
-```
-
-**Outcome:** Correct UTF-8 username in both the hash and the Authorization header. PR was blocked by psf/requests interaction restrictions (contributor-only), fix ready to submit.
+**Bug:** `bytes` username/password rendered as Python `repr` (`b'...'`) in Authorization header.  
+**Fix:** Decode bytes→str via UTF-8 at the start of `build_digest_header()`.
 
 ---
 
 ## 🛠️ Languages & Skills Demonstrated
 
-- Python — bug analysis, string encoding, Unicode/wide-char handling
-- Open source workflow — fork → branch → fix → PR
-- Reading and understanding large production codebases
+- **Python** — Unicode/wide-char handling, streaming delta accumulation, HTTP auth
+- **AI/ML tooling** — OpenAI streaming API internals, tool-call accumulation
+- **Open source workflow** — fork → branch → fix → PR with detailed write-ups
+- **Code reading** — Understanding large production codebases quickly
 
 ---
 
-*Last updated: May 2026*
+*Last updated: May 2026 · 3 contributions · 2 open PRs*
